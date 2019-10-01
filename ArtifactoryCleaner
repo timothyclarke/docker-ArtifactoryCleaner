@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import requests
+from natsort import natsorted
+
+def CleanArtifactory(args):
+  artifactoryQueryUrl   = 'https://' + args.host + '/api/storage/' + args.repo + '/' + args.name + '/'
+  artifactoryRemoveUrl  = 'https://' + args.host + '/' + args.repo + '/' + args.name + '/'
+  artifactoryResponse   = requests.get(artifactoryQueryUrl, auth=(args.user,args.passwd))
+
+  artifactoryVersions = []
+  for version in artifactoryResponse.json()['children']:
+    if version['uri'] !=  '/latest':
+      artifactoryVersions.append(version['uri'].replace('/',''))
+
+  sortedVersions = natsorted(artifactoryVersions)
+  if len(sortedVersions) > args.keep:
+    if not args.quiet:
+      print('Artifactory has {1}, We want to Keep the latest {0}'.format(args.keep, len(sortedVersions)))
+    for i in range( len(sortedVersions) - args.keep ):
+      if not args.quiet:
+        print('Removing {0}'.format(sortedVersions[i]))
+      try:
+        response  = requests.delete(artifactoryRemoveUrl + sortedVersions[i], auth=(args.user,args.passwd))
+        if response.status_code == 204 and not args.quiet:
+          print('Removed {0}'.format(sortedVersions[i]))
+      except requests.exceptions.RequestException as error:
+        sys.stderr.write(error)
+        sys.exit(1)
+  else:
+    if not args.quiet:
+      print('No need to remove any. Artifactory has {1} and we want to keep {0}'.format(args.keep, len(sortedVersions)))
+
+## JSON Objects (ARTEFACT_NAMEs) in repo
+#curl -u ${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD} https://${ARTIFACTORY_HOST}/api/storage/${REPOSITORY}/${ARTEFACT_NAME}/
+## Delete an object (loop through objects to be removed)
+#curl -u ${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD} -X DELETE https://${ARTIFACTORY_HOST}/${REPOSITORY}/${ARTEFACT_NAME}/${version}
+
+class EnvDefault(argparse.Action):
+  def __init__(self, envvar, required=True, default=None, **kwargs):
+    if not default and envvar:
+      if envvar in os.environ:
+        default = os.environ[envvar]
+    if required and default:
+      required = False
+    super(EnvDefault, self).__init__(default=default, required=required, **kwargs)
+
+  def __call__(self, parser, namespace, values, option_string=None):
+    setattr(namespace, self.dest, values)
+
+if __name__ == '__main__':
+  parser=argparse.ArgumentParser()
+  parser.add_argument( "-a", "--artifactory-host",
+    action=EnvDefault, dest="host", envvar='ARTIFACTORY_HOST',
+    help="(ENV Variable: ARTIFACTORY_HOST) Specify the Artifactory host to use (For managed cloud offerings this is typically in the form <account-name>.jfrog.io/<account-name>)")
+  parser.add_argument( "-k", "--number-to-keep",
+    action=EnvDefault, dest="keep", envvar='NUMBER_TO_KEEP', type=int,
+    help="(ENV Variable: NUMBER_TO_KEEP) Number of Artefacts to Keep")
+  parser.add_argument( "-r", "--repository",
+    action=EnvDefault, dest="repo", envvar='REPOSITORY',
+    help="(ENV Variable: REPOSITORY) Repository where the artrefact resides")
+  parser.add_argument( "-n", "--name",
+    action=EnvDefault, dest="name", envvar='ARTEFACT_NAME',
+    help="(ENV Variable: ARTEFACT_NAME) Name of the artefact to review")
+  parser.add_argument( "-u", "--username",
+    action=EnvDefault, dest="user", envvar='ARTIFACTORY_USERNAME',
+    help="(ENV Variable: ARTIFACTORY_USERNAME) Artifactory Username with permissions to view and remove")
+  parser.add_argument( "-p", "--password",
+    action=EnvDefault, dest="passwd", envvar='ARTIFACTORY_PASSWORD',
+    help="(ENV Variable: ARTIFACTORY_PASSWORD) Password for Artifactory user")
+  parser.add_argument( "-q", "--quiet", dest="quiet", default=False, action='store_true',
+    help="Surpresses deletion messages")
+
+  args=parser.parse_args()
+
+  CleanArtifactory(args)
